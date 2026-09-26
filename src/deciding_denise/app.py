@@ -99,7 +99,9 @@ async def lifespan(app: FastAPI):
         finally:
             logger.info("Application stopping")
     else:
-        logger.info("Decision model client not configured; deterministic fallback enabled")
+        logger.info(
+            "Decision model client not configured; deterministic fallback enabled"
+        )
         try:
             yield
         finally:
@@ -112,9 +114,10 @@ app = FastAPI(lifespan=lifespan)
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     supplied_id = request.headers.get("x-request-id", "")
-    request_id = "".join(
-        char for char in supplied_id if char.isalnum() or char in "-_"
-    )[:64] or uuid.uuid4().hex
+    request_id = (
+        "".join(char for char in supplied_id if char.isalnum() or char in "-_")[:64]
+        or uuid.uuid4().hex
+    )
     started = time.perf_counter()
     with logger.contextualize(request_id=request_id):
         request.state.request_id = request_id
@@ -188,8 +191,6 @@ async def move(state: dict) -> dict[str, str]:
             result = await client.system_one(
                 compact,
                 {"move": question},
-                timeout=decision_model_timeout(),
-                retry=RetryPolicy(max_retries=0),
             )
             chosen = result.choices["move"].choice
             if chosen in {option["move"] for option in safe}:
@@ -208,7 +209,7 @@ async def move(state: dict) -> dict[str, str]:
                 chosen,
                 fallback,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 - any model failure must use the safe fallback
             logger.exception(
                 "Decision model move failed game_id={} turn={} duration_ms={:.1f}; using fallback={}",
                 game_id,
@@ -216,19 +217,17 @@ async def move(state: dict) -> dict[str, str]:
                 (time.perf_counter() - started) * 1000,
                 fallback,
             )
-    elif client is None:
-        logger.info(
-            "Deterministic move selected game_id={} turn={} move={} reason=no_decision_model_client",
-            game_id,
-            turn,
-            fallback,
-        )
     else:
+        reason = (
+            "no_decision_model_client"
+            if client is None
+            else f"safe_move_count_{len(safe)}"
+        )
         logger.info(
-            "Deterministic move selected game_id={} turn={} move={} reason=safe_move_count_{}",
+            "Deterministic move selected game_id={} turn={} move={} reason={}",
             game_id,
             turn,
             fallback,
-            len(safe),
+            reason,
         )
     return {"move": fallback}
