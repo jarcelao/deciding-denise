@@ -16,7 +16,14 @@ from httpx2 import Timeout
 from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
 
 from . import config
-from .hybrid import analyze_turn, deterministic_move, model_input, solo_move
+from .hybrid import (
+    analyze_turn,
+    deterministic_move,
+    model_input,
+    solo_cards,
+    solo_model_input,
+    solo_move,
+)
 
 request_id_context: ContextVar[str] = ContextVar("request_id", default="-")
 logger = logging.getLogger(__name__)
@@ -154,39 +161,47 @@ async def move(state: dict, request: Request) -> dict[str, str]:
     policy = os.getenv("DENISE_POLICY", "hybrid")
     if policy not in {"hybrid", "deterministic"}:
         raise ValueError(f"Unknown DENISE_POLICY: {policy}")
-    if len(state["board"]["snakes"]) == 1:
-        return {"move": solo_move(state)}
     started = request.state.started_monotonic
     timeout_ms = state.get("game", {}).get("timeout", 500)
     reserve_ms = float(os.getenv("DENISE_TRANSPORT_RESERVE_MS", "125"))
     cutoff = started + max(0, timeout_ms - reserve_ms) / 1000
     try:
-        analysis = analyze_turn(state, cutoff)
-        if policy == "deterministic":
-            return {"move": deterministic_move(analysis)}
-        if len(analysis.offered) == 1:
-            return {"move": analysis.offered[0]}
+        if len(state["board"]["snakes"]) == 1:
+            cards = solo_cards(state)
+            offered = list(cards)
+            if policy == "deterministic":
+                return {"move": solo_move(state)}
+            compact, question = solo_model_input(state, cards)
+            analysis_ms = 0.0
+        else:
+            analysis = analyze_turn(state, cutoff)
+            offered = analysis.offered
+            if policy == "deterministic":
+                return {"move": deterministic_move(analysis)}
+            compact, question = model_input(state, analysis)
+            analysis_ms = analysis.elapsed_ms
+        if len(offered) == 1:
+            return {"move": offered[0]}
         if cutoff - time.monotonic() < 0.25:
-            raise TimeoutError("less than 250 ms remains for Jev")
+            raise TimeoutError("less than 250 ms remains for decision model")
         client = getattr(app.state, "decision_model_client", None)
         if client is None:
-            raise RuntimeError("Jev client unavailable")
-        compact, question = model_input(state, analysis)
+            raise RuntimeError("Model client unavailable")
         async with asyncio.timeout_at(
             asyncio.get_running_loop().time() + max(0, cutoff - time.monotonic())
         ):
             result = await client.system_one(compact, {"move": question})
         answer = result.choices["move"]
         chosen = answer.choice
-        if chosen not in analysis.offered:
-            raise ValueError(f"Jev chose unavailable move: {chosen}")
+        if chosen not in offered:
+            raise ValueError(f"Decision model chose unavailable move: {chosen}")
         usage = getattr(result, "usage", None)
         logger.info(
             "Hybrid move selected game_id=%s turn=%s move=%s analysis_ms=%.1f confidence=%s probabilities=%s model=%s input_tokens=%s output_tokens=%s",
             state["game"]["id"],
             state["turn"],
             chosen,
-            analysis.elapsed_ms,
+            analysis_ms,
             getattr(answer, "confidence", None),
             getattr(answer, "probabilities", None),
             getattr(result, "model", None),

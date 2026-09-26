@@ -42,14 +42,27 @@ def point(value) -> tuple[int, int]:
 
 
 def solo_move(state):
+    cards = solo_cards(state)
+    return min(
+        cards,
+        key=lambda move: (
+            cards[move]["fatal"],
+            cards[move]["food"] is False,
+            cards[move]["hazard"],
+            list(DIRECTIONS).index(move),
+        ),
+    )
+
+
+def solo_cards(state):
     board, snake = state["board"], state["you"]
     food = {point(p) for p in board["food"]}
     hazards = {point(p) for p in board.get("hazards", [])}
     body = [point(p) for p in snake["body"]]
     occupied = set(body[:-1])
-    choices = []
+    cards = {}
     damage = state["game"]["ruleset"].get("settings", {}).get("hazardDamagePerTurn", 14)
-    for index, (move, (dx, dy)) in enumerate(DIRECTIONS.items()):
+    for move, (dx, dy) in DIRECTIONS.items():
         dest = (snake["head"]["x"] + dx, snake["head"]["y"] + dy)
         if not (0 <= dest[0] < board["width"] and 0 <= dest[1] < board["height"]):
             continue
@@ -58,8 +71,45 @@ def solo_move(state):
         fatal = dest not in food and snake["health"] <= 1 + (
             damage if dest in hazards else 0
         )
-        choices.append((fatal, dest not in food, dest in hazards, index, move))
-    return min(choices)[-1] if choices else next(iter(DIRECTIONS))
+        cards[move] = {
+            "destination": list(dest),
+            "fatal": fatal,
+            "food": dest in food,
+            "hazard": dest in hazards,
+        }
+    return cards or {
+        next(iter(DIRECTIONS)): {"fatal": True, "food": False, "hazard": False}
+    }
+
+
+def solo_model_input(state, cards):
+    offered = list(cards)
+    compact = {
+        "turn": state["turn"],
+        "rules": state["game"]["ruleset"],
+        "board": {
+            "width": state["board"]["width"],
+            "height": state["board"]["height"],
+        },
+        "you": {
+            "head": state["you"]["head"],
+            "body": state["you"]["body"],
+            "health": state["you"]["health"],
+        },
+        "food": state["board"]["food"],
+        "hazards": state["board"].get("hazards", []),
+        "cards": cards,
+    }
+    question = Choice(
+        instructions=(
+            "Which offered move gives Denise the best chance to survive this solo game? "
+            "Choose only an offered direction."
+        ),
+        criteria={
+            move: f"Move {move}; evidence is in cards.{move}" for move in offered
+        },
+    )
+    return compact, question
 
 
 def supported(state):
