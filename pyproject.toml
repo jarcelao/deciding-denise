@@ -7,7 +7,10 @@ authors = [
     { name = "Jericho Arcelao", email = "jerichoarcelao@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "fastapi[standard]>=0.141.1",
+    "typesafe-sdk>=0.7.1",
+]
 
 [project.scripts]
 deciding-denise = "deciding_denise:main"
@@ -15,3 +18,10 @@ deciding-denise = "deciding_denise:main"
 [build-system]
 requires = ["uv_build>=0.12.19,<0.13.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.9",
+    "ty>=0.0.84",
+]
