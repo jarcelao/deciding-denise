@@ -16,6 +16,7 @@ from httpx2 import Timeout
 from loguru import logger
 from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
 
+from . import config
 from .brain import candidates, decision_model_input, rank
 
 DEFAULT_DECISION_TIMEOUT_SECONDS = 0.25
@@ -147,7 +148,13 @@ async def log_requests(request: Request, call_next):
 @app.get("/")
 async def details() -> dict:
     logger.debug("Snake details requested")
-    return {"apiversion": "1", "color": "#7345B7", "head": "default", "tail": "default"}
+    return {
+        "apiversion": "1",
+        "author": config.AUTHOR,
+        "color": config.COLOR,
+        "head": config.HEAD,
+        "tail": config.TAIL,
+    }
 
 
 @app.post("/start")
