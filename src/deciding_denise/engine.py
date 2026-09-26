@@ -1,4 +1,4 @@
-"""One-turn standard-duel evidence and experimental policies."""
+"""One-turn Battlesnake evidence and decision inputs."""
 
 from collections import deque
 from dataclasses import dataclass
@@ -39,19 +39,6 @@ class MoveEvidence(TypedDict):
 
 def point(value) -> tuple[int, int]:
     return (value["x"], value["y"])
-
-
-def solo_move(state):
-    cards = solo_cards(state)
-    return min(
-        cards,
-        key=lambda move: (
-            cards[move]["fatal"],
-            cards[move]["food"] is False,
-            cards[move]["hazard"],
-            list(DIRECTIONS).index(move),
-        ),
-    )
 
 
 def solo_cards(state):
@@ -358,25 +345,3 @@ def model_input(state, analysis):
     )
     return compact, question
 
-
-def deterministic_move(analysis):
-    """Experimental same-evidence control; never used as a model fallback."""
-
-    def key(move):
-        outcomes = analysis.cards[move]["outcomes"]
-        survivors = [o for o in outcomes if o["our_reason"] is None]
-        return (
-            len(survivors),
-            min((o["mobility"]["space_minus_length"] for o in survivors), default=-999),
-            max(
-                (
-                    o["food"].get("pre_food_health_margin", -999)
-                    for o in survivors
-                    if o["food"]
-                ),
-                default=-999,
-            ),
-            -list(DIRECTIONS).index(move),
-        )
-
-    return max(analysis.offered, key=key)

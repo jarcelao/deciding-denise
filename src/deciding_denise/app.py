@@ -16,13 +16,11 @@ from httpx2 import Timeout
 from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
 
 from . import config
-from .hybrid import (
+from .engine import (
     analyze_turn,
-    deterministic_move,
     model_input,
     solo_cards,
     solo_model_input,
-    solo_move,
 )
 
 request_id_context: ContextVar[str] = ContextVar("request_id", default="-")
@@ -158,9 +156,6 @@ async def end(state: dict | None = None) -> dict:
 
 @app.post("/move")
 async def move(state: dict, request: Request) -> dict[str, str]:
-    policy = os.getenv("DENISE_POLICY", "hybrid")
-    if policy not in {"hybrid", "deterministic"}:
-        raise ValueError(f"Unknown DENISE_POLICY: {policy}")
     started = request.state.started_monotonic
     timeout_ms = state.get("game", {}).get("timeout", 500)
     reserve_ms = float(os.getenv("DENISE_TRANSPORT_RESERVE_MS", "125"))
@@ -169,15 +164,11 @@ async def move(state: dict, request: Request) -> dict[str, str]:
         if len(state["board"]["snakes"]) == 1:
             cards = solo_cards(state)
             offered = list(cards)
-            if policy == "deterministic":
-                return {"move": solo_move(state)}
             compact, question = solo_model_input(state, cards)
             analysis_ms = 0.0
         else:
             analysis = analyze_turn(state, cutoff)
             offered = analysis.offered
-            if policy == "deterministic":
-                return {"move": deterministic_move(analysis)}
             compact, question = model_input(state, analysis)
             analysis_ms = analysis.elapsed_ms
         if len(offered) == 1:
@@ -197,7 +188,7 @@ async def move(state: dict, request: Request) -> dict[str, str]:
             raise ValueError(f"Decision model chose unavailable move: {chosen}")
         usage = getattr(result, "usage", None)
         logger.info(
-            "Hybrid move selected game_id=%s turn=%s move=%s analysis_ms=%.1f confidence=%s probabilities=%s model=%s input_tokens=%s output_tokens=%s",
+            "Engine move selected game_id=%s turn=%s move=%s analysis_ms=%.1f confidence=%s probabilities=%s model=%s input_tokens=%s output_tokens=%s",
             state["game"]["id"],
             state["turn"],
             chosen,
@@ -210,5 +201,5 @@ async def move(state: dict, request: Request) -> dict[str, str]:
         )
         return {"move": chosen}
     except Exception:
-        logger.exception("Experimental policy failed policy=%s", policy)
+        logger.exception("Engine move failed")
         raise

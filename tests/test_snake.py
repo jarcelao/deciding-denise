@@ -71,14 +71,10 @@ def test_webhooks_and_terminal_turn():
     with TestClient(app) as client:
         assert client.get("/").json()["apiversion"] == "1"
         assert client.post("/start", json=state()).status_code == 200
-        response = client.post("/move", json=state())
-        assert response.status_code == 200
-        assert response.headers["content-type"] == "application/json"
-        assert response.json() == {"move": "up"}
         assert client.post("/end", json=state()).status_code == 200
 
 
-def test_solo_move_avoids_wall_body_and_fatal_hazard():
+def test_solo_engine_marks_fatal_hazard_and_excludes_wall_and_body():
     board = state(
         head=(0, 2),
         body=[(0, 2), (0, 1), (1, 1)],
@@ -86,9 +82,16 @@ def test_solo_move_avoids_wall_body_and_fatal_hazard():
         food=[(1, 2)],
         hazards=[(0, 3)],
     )
+    fake = FakeDecisionModel("right")
     with TestClient(app) as client:
+        app.state.decision_model_client = fake
         response = client.post("/move", json=board)
     assert response.json() == {"move": "right"}
+    cards = fake.calls[0][0]["cards"]
+    assert cards["up"]["fatal"]
+    assert cards["right"]["food"]
+    assert "left" not in cards
+    assert "down" not in cards
 
 
 def test_request_id_appears_in_logs():
@@ -108,7 +111,7 @@ def test_request_id_appears_in_logs():
 
 
 def test_hazard_and_starvation():
-    from deciding_denise.hybrid import simulate
+    from deciding_denise.engine import simulate
 
     board = state(health=15, hazards=[(2, 3)], enemies=[enemy((4, 4))])
     assert simulate(board, "up", "left")["me"]["reason"] == "hazard"
@@ -123,8 +126,8 @@ def test_invalid_choice_has_no_fallback():
         assert response.status_code == 500
 
 
-def test_hybrid_preserves_conditional_head_contest():
-    from deciding_denise.hybrid import analyze_turn
+def test_engine_preserves_conditional_head_contest():
+    from deciding_denise.engine import analyze_turn
 
     board = state(head=(2, 2), body=[(2, 2), (2, 1), (2, 0)], enemies=[enemy((4, 2))])
     analysis = analyze_turn(board)
@@ -138,8 +141,8 @@ def test_hybrid_preserves_conditional_head_contest():
     )
 
 
-def test_hybrid_food_growth_and_one_health():
-    from deciding_denise.hybrid import simulate
+def test_engine_food_growth_and_one_health():
+    from deciding_denise.engine import simulate
 
     board = state(health=1, food=[(2, 3)], enemies=[enemy((4, 4))])
     result = simulate(board, "up", "left")["me"]
@@ -148,8 +151,7 @@ def test_hybrid_food_growth_and_one_health():
     assert result["body"] == [(2, 3), (2, 2), (2, 1), (2, 1)]
 
 
-def test_hybrid_endpoint_model_controls_choice(monkeypatch):
-    monkeypatch.delenv("DENISE_POLICY", raising=False)
+def test_engine_endpoint_model_controls_choice():
     with TestClient(app) as client:
         fake = FakeDecisionModel("right")
         app.state.decision_model_client = fake
@@ -159,8 +161,7 @@ def test_hybrid_endpoint_model_controls_choice(monkeypatch):
         assert len(fake.calls[0][0]["cards"]) > 1
 
 
-def test_hybrid_model_failure_has_no_fallback(monkeypatch):
-    monkeypatch.setenv("DENISE_POLICY", "hybrid")
+def test_engine_model_failure_has_no_fallback():
     with TestClient(app, raise_server_exceptions=False) as client:
         app.state.decision_model_client = FakeDecisionModel(error=TimeoutError())
         result = client.post("/move", json=state(enemies=[enemy((4, 4))]))
@@ -171,7 +172,7 @@ def test_simulator_matches_cli_engine_turns():
     import json
     from pathlib import Path
 
-    from deciding_denise.hybrid import simulate
+    from deciding_denise.engine import simulate
 
     cases = json.loads(
         (Path(__file__).parent / "fixtures" / "engine_turns.json").read_text()
@@ -199,8 +200,8 @@ def test_simulator_matches_cli_engine_turns():
             ]
 
 
-def test_hybrid_equal_head_contest_and_simultaneous_death():
-    from deciding_denise.hybrid import simulate
+def test_engine_equal_head_contest_and_simultaneous_death():
+    from deciding_denise.engine import simulate
 
     rival = {
         "id": "enemy",
@@ -215,8 +216,8 @@ def test_hybrid_equal_head_contest_and_simultaneous_death():
     assert outcome["enemy"]["reason"] == "head_to_head"
 
 
-def test_hybrid_vacating_and_stacked_tails():
-    from deciding_denise.hybrid import simulate
+def test_engine_vacating_and_stacked_tails():
+    from deciding_denise.engine import simulate
 
     rival = enemy((4, 4))
     vacating = state(
@@ -227,8 +228,8 @@ def test_hybrid_vacating_and_stacked_tails():
     assert simulate(stacked, "left", "left")["me"]["reason"] == "body"
 
 
-def test_hybrid_food_on_hazard_avoids_damage():
-    from deciding_denise.hybrid import simulate
+def test_engine_food_on_hazard_avoids_damage():
+    from deciding_denise.engine import simulate
 
     board = state(health=1, food=[(2, 3)], hazards=[(2, 3)], enemies=[enemy((4, 4))])
     result = simulate(board, "up", "left")["me"]
@@ -236,8 +237,8 @@ def test_hybrid_food_on_hazard_avoids_damage():
     assert result["health"] == 100
 
 
-def test_hybrid_eliminated_opponent_body_does_not_collide():
-    from deciding_denise.hybrid import simulate
+def test_engine_eliminated_opponent_body_does_not_collide():
+    from deciding_denise.engine import simulate
 
     rival = {
         "id": "enemy",
