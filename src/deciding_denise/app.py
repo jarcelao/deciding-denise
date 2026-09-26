@@ -1,7 +1,7 @@
 """Battlesnake HTTP server."""
 
+import asyncio
 import logging
-import math
 import os
 import sys
 import time
@@ -16,9 +16,8 @@ from httpx2 import Timeout
 from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
 
 from . import config
-from .brain import candidates, decision_model_input, rank
+from .hybrid import analyze_turn, deterministic_move, model_input, solo_move
 
-DEFAULT_DECISION_TIMEOUT_SECONDS = 0.25
 request_id_context: ContextVar[str] = ContextVar("request_id", default="-")
 logger = logging.getLogger(__name__)
 
@@ -48,17 +47,6 @@ def configure_logging() -> None:
         uvicorn_logger.setLevel(logging.DEBUG if debug else logging.INFO)
 
 
-def decision_model_timeout() -> float | Timeout:
-    seconds = float(
-        os.getenv("DECISION_TIMEOUT_SECONDS", str(DEFAULT_DECISION_TIMEOUT_SECONDS))
-    )
-    if seconds == -1:
-        return Timeout(None)
-    if not math.isfinite(seconds) or seconds <= 0:
-        raise ValueError("DECISION_TIMEOUT_SECONDS must be -1 or a positive number")
-    return seconds
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     load_dotenv(Path.cwd() / ".env")
@@ -66,28 +54,24 @@ async def lifespan(app: FastAPI):
     logger.info("Application starting")
     app.state.decision_model_client = None
     if os.getenv("TYPESAFE_API_KEY"):
-        timeout = decision_model_timeout()
         base_url = os.getenv("TYPESAFE_BASE_URL")
         logger.info(
-            "Decision model client configured endpoint=%s timeout_seconds=%s",
+            "Decision model client configured endpoint=%s; game deadline enforced per move",
             "custom" if base_url else "sdk-default",
-            "disabled" if isinstance(timeout, Timeout) else timeout,
         )
         try:
             async with AsyncTypeSafeClient(
                 api_key=os.environ["TYPESAFE_API_KEY"],
                 base_url=base_url,
                 retry=RetryPolicy(max_retries=0),
-                timeout=timeout,
+                timeout=Timeout(None),
             ) as client:
                 app.state.decision_model_client = client
                 yield
         finally:
             logger.info("Application stopping")
     else:
-        logger.info(
-            "Decision model client not configured; deterministic fallback enabled"
-        )
+        logger.info("Decision model client not configured")
         try:
             yield
         finally:
@@ -105,6 +89,7 @@ async def log_requests(request: Request, call_next):
         or uuid.uuid4().hex
     )
     started = time.perf_counter()
+    request.state.started_monotonic = time.monotonic()
     token = request_id_context.set(request_id)
     try:
         request.state.request_id = request_id
@@ -165,64 +150,50 @@ async def end(state: dict | None = None) -> dict:
 
 
 @app.post("/move")
-async def move(state: dict) -> dict[str, str]:
-    options = candidates(state)
-    safe = rank(state, [o for o in options if o["safe"]])
-    fallback = safe[0]["move"] if safe else rank(state, options)[0]["move"]
-    client = getattr(app.state, "decision_model_client", None)
-    game_id = state.get("game", {}).get("id", "unknown")
-    turn = state.get("turn", "unknown")
-    logger.info(
-        "Move evaluated game_id=%s turn=%s safe_moves=%s fallback=%s",
-        game_id,
-        turn,
-        ",".join(option["move"] for option in safe) or "none",
-        fallback,
-    )
-    if client is not None and len(safe) > 1:
-        compact, question = decision_model_input(state, safe)
-        started = time.perf_counter()
-        try:
-            result = await client.system_one(
-                compact,
-                {"move": question},
-            )
-            chosen = result.choices["move"].choice
-            if chosen in {option["move"] for option in safe}:
-                logger.info(
-                    "Decision model move selected game_id=%s turn=%s move=%s duration_ms=%.1f",
-                    game_id,
-                    turn,
-                    chosen,
-                    (time.perf_counter() - started) * 1000,
-                )
-                return {"move": chosen}
-            logger.warning(
-                "Decision model returned unavailable move game_id=%s turn=%s move=%s; using fallback=%s",
-                game_id,
-                turn,
-                chosen,
-                fallback,
-            )
-        except Exception:
-            logger.exception(
-                "Decision model move failed game_id=%s turn=%s duration_ms=%.1f; using fallback=%s",
-                game_id,
-                turn,
-                (time.perf_counter() - started) * 1000,
-                fallback,
-            )
-    else:
-        reason = (
-            "no_decision_model_client"
-            if client is None
-            else f"safe_move_count_{len(safe)}"
-        )
+async def move(state: dict, request: Request) -> dict[str, str]:
+    policy = os.getenv("DENISE_POLICY", "hybrid")
+    if policy not in {"hybrid", "deterministic"}:
+        raise ValueError(f"Unknown DENISE_POLICY: {policy}")
+    if len(state["board"]["snakes"]) == 1:
+        return {"move": solo_move(state)}
+    started = request.state.started_monotonic
+    timeout_ms = state.get("game", {}).get("timeout", 500)
+    reserve_ms = float(os.getenv("DENISE_TRANSPORT_RESERVE_MS", "125"))
+    cutoff = started + max(0, timeout_ms - reserve_ms) / 1000
+    try:
+        analysis = analyze_turn(state, cutoff)
+        if policy == "deterministic":
+            return {"move": deterministic_move(analysis)}
+        if len(analysis.offered) == 1:
+            return {"move": analysis.offered[0]}
+        if cutoff - time.monotonic() < 0.25:
+            raise TimeoutError("less than 250 ms remains for Jev")
+        client = getattr(app.state, "decision_model_client", None)
+        if client is None:
+            raise RuntimeError("Jev client unavailable")
+        compact, question = model_input(state, analysis)
+        async with asyncio.timeout_at(
+            asyncio.get_running_loop().time() + max(0, cutoff - time.monotonic())
+        ):
+            result = await client.system_one(compact, {"move": question})
+        answer = result.choices["move"]
+        chosen = answer.choice
+        if chosen not in analysis.offered:
+            raise ValueError(f"Jev chose unavailable move: {chosen}")
+        usage = getattr(result, "usage", None)
         logger.info(
-            "Deterministic move selected game_id=%s turn=%s move=%s reason=%s",
-            game_id,
-            turn,
-            fallback,
-            reason,
+            "Hybrid move selected game_id=%s turn=%s move=%s analysis_ms=%.1f confidence=%s probabilities=%s model=%s input_tokens=%s output_tokens=%s",
+            state["game"]["id"],
+            state["turn"],
+            chosen,
+            analysis.elapsed_ms,
+            getattr(answer, "confidence", None),
+            getattr(answer, "probabilities", None),
+            getattr(result, "model", None),
+            getattr(usage, "input_tokens", None),
+            getattr(usage, "output_tokens", None),
         )
-    return {"move": fallback}
+        return {"move": chosen}
+    except Exception:
+        logger.exception("Experimental policy failed policy=%s", policy)
+        raise
