@@ -1,18 +1,31 @@
 """Battlesnake HTTP server."""
 
 import logging
+import math
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from httpx2 import Timeout
 from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
 
 from .brain import candidates, jev_input, rank
 
 log = logging.getLogger(__name__)
-JEV_TIMEOUT_SECONDS = 0.25
+DEFAULT_DECISION_TIMEOUT_SECONDS = 0.25
+
+
+def jev_timeout() -> float | Timeout:
+    seconds = float(
+        os.getenv("DECISION_TIMEOUT_SECONDS", str(DEFAULT_DECISION_TIMEOUT_SECONDS))
+    )
+    if seconds == -1:
+        return Timeout(None)
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise ValueError("DECISION_TIMEOUT_SECONDS must be -1 or a positive number")
+    return seconds
 
 
 @asynccontextmanager
@@ -24,7 +37,7 @@ async def lifespan(app: FastAPI):
             api_key=os.environ["TYPESAFE_API_KEY"],
             base_url=os.getenv("TYPESAFE_BASE_URL"),
             retry=RetryPolicy(max_retries=0),
-            timeout=JEV_TIMEOUT_SECONDS,
+            timeout=jev_timeout(),
         ) as client:
             app.state.jev_client = client
             yield
@@ -62,7 +75,7 @@ async def move(state: dict) -> dict[str, str]:
             result = await client.system_one(
                 compact,
                 {"move": question},
-                timeout=JEV_TIMEOUT_SECONDS,
+                timeout=jev_timeout(),
                 retry=RetryPolicy(max_retries=0),
             )
             chosen = result.choices["move"].choice

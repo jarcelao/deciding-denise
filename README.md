@@ -17,9 +17,10 @@ Set your key in `.env` in the directory where you run the server:
 ```dotenv
 TYPESAFE_API_KEY=your_key
 # TYPESAFE_BASE_URL=https://your-compatible-api-root
+# DECISION_TIMEOUT_SECONDS=0.25
 ```
 
-The server listens on port 8000. Environment variables take precedence over `.env` values. Leave `TYPESAFE_API_KEY` unset to run with the deterministic fallback. Set `TYPESAFE_BASE_URL` to a TypeSafe-compatible API root when using another provider; the SDK default is TypeSafe's API.
+The server listens on port 8000. Environment variables take precedence over `.env` values. Leave `TYPESAFE_API_KEY` unset to run with the deterministic fallback. Set `TYPESAFE_BASE_URL` to a TypeSafe-compatible API root when using another provider; the SDK default is TypeSafe's API. `DECISION_TIMEOUT_SECONDS` defaults to `0.25` and accepts a positive number of seconds. Set it to `-1` to disable the remote-model timeout.
 
 In Battlesnake, point the snake's URL to your publicly reachable server. For a local smoke check:
 
