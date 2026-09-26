@@ -1,8 +1,10 @@
+import io
+import logging
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-from deciding_denise.app import app
+from deciding_denise.app import RequestIdFilter, app
 from deciding_denise.brain import candidates
 
 
@@ -78,6 +80,22 @@ def test_webhooks_and_decision_model_choice():
         assert response.json() == {"move": "left"}
         assert "left" in fake.calls[0][1]["move"].criteria
         assert client.post("/end", json=state()).status_code == 200
+
+
+def test_request_id_appears_in_logs():
+    with TestClient(app) as client:
+        output = io.StringIO()
+        handler = logging.StreamHandler(output)
+        handler.addFilter(RequestIdFilter())
+        handler.setFormatter(logging.Formatter("request_id=%(request_id)s %(message)s"))
+        logging.getLogger().addHandler(handler)
+        try:
+            response = client.get("/", headers={"x-request-id": "test-123"})
+        finally:
+            logging.getLogger().removeHandler(handler)
+        assert response.headers["x-request-id"] == "test-123"
+        assert "Request completed" in output.getvalue()
+        assert "request_id=test-123" in output.getvalue()
 
 
 def test_walls_bodies_and_head_threats():

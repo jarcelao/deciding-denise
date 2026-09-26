@@ -1,6 +1,5 @@
 """Battlesnake HTTP server."""
 
-import inspect
 import logging
 import math
 import os
@@ -8,54 +7,40 @@ import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from httpx2 import Timeout
-from loguru import logger
 from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
 
 from . import config
 from .brain import candidates, decision_model_input, rank
 
 DEFAULT_DECISION_TIMEOUT_SECONDS = 0.25
+request_id_context: ContextVar[str] = ContextVar("request_id", default="-")
+logger = logging.getLogger(__name__)
 
 
-class InterceptHandler(logging.Handler):
-    def emit(self, record: logging.LogRecord) -> None:
-        try:
-            level: str | int = logger.level(record.levelname).name
-        except ValueError:
-            level = record.levelno
-
-        frame, depth = inspect.currentframe(), 0
-        while frame and (depth == 0 or frame.f_code.co_filename == logging.__file__):
-            frame = frame.f_back
-            depth += 1
-        logger.opt(depth=depth, exception=record.exc_info).log(
-            level, record.getMessage()
-        )
+class RequestIdFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = request_id_context.get()
+        return True
 
 
 def configure_logging() -> None:
     debug = os.getenv("DEBUG", "").lower() in {"1", "true", "yes", "on"}
-    level = "DEBUG" if debug else "INFO"
-    logger.remove()
-    logger.configure(extra={"request_id": "-"})
-    logger.add(
-        sys.stderr,
-        level=level,
-        format=(
-            "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> "
-            "<dim>|</dim> <level>{level:<8}</level> <dim>|</dim> "
-            "<cyan>request_id={extra[request_id]}</cyan> "
-            "<dim>|</dim> {message}"
-        ),
-        backtrace=False,
-        diagnose=False,
+    handler = logging.StreamHandler(sys.stderr)
+    handler.addFilter(RequestIdFilter())
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s | %(levelname)-8s | request_id=%(request_id)s | %(message)s"
+        )
     )
-    logging.basicConfig(handlers=[InterceptHandler()], level=logging.NOTSET, force=True)
+    logging.basicConfig(
+        handlers=[handler], level=logging.DEBUG if debug else logging.INFO, force=True
+    )
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         uvicorn_logger = logging.getLogger(name)
         uvicorn_logger.handlers.clear()
@@ -84,7 +69,7 @@ async def lifespan(app: FastAPI):
         timeout = decision_model_timeout()
         base_url = os.getenv("TYPESAFE_BASE_URL")
         logger.info(
-            "Decision model client configured endpoint={} timeout_seconds={}",
+            "Decision model client configured endpoint=%s timeout_seconds=%s",
             "custom" if base_url else "sdk-default",
             "disabled" if isinstance(timeout, Timeout) else timeout,
         )
@@ -120,14 +105,15 @@ async def log_requests(request: Request, call_next):
         or uuid.uuid4().hex
     )
     started = time.perf_counter()
-    with logger.contextualize(request_id=request_id):
+    token = request_id_context.set(request_id)
+    try:
         request.state.request_id = request_id
         try:
             response = await call_next(request)
         except Exception:
             elapsed_ms = (time.perf_counter() - started) * 1000
             logger.exception(
-                "Request failed method={} path={} duration_ms={:.1f}",
+                "Request failed method=%s path=%s duration_ms=%.1f",
                 request.method,
                 request.url.path,
                 elapsed_ms,
@@ -136,13 +122,15 @@ async def log_requests(request: Request, call_next):
         elapsed_ms = (time.perf_counter() - started) * 1000
         response.headers["x-request-id"] = request_id
         logger.info(
-            "Request completed method={} path={} status={} duration_ms={:.1f}",
+            "Request completed method=%s path=%s status=%s duration_ms=%.1f",
             request.method,
             request.url.path,
             response.status_code,
             elapsed_ms,
         )
         return response
+    finally:
+        request_id_context.reset(token)
 
 
 @app.get("/")
@@ -160,7 +148,7 @@ async def details() -> dict:
 @app.post("/start")
 async def start(state: dict | None = None) -> dict:
     logger.info(
-        "Game started game_id={}",
+        "Game started game_id=%s",
         (state or {}).get("game", {}).get("id", "unknown"),
     )
     return {}
@@ -169,7 +157,7 @@ async def start(state: dict | None = None) -> dict:
 @app.post("/end")
 async def end(state: dict | None = None) -> dict:
     logger.info(
-        "Game ended game_id={} turn={}",
+        "Game ended game_id=%s turn=%s",
         (state or {}).get("game", {}).get("id", "unknown"),
         (state or {}).get("turn", "unknown"),
     )
@@ -185,7 +173,7 @@ async def move(state: dict) -> dict[str, str]:
     game_id = state.get("game", {}).get("id", "unknown")
     turn = state.get("turn", "unknown")
     logger.info(
-        "Move evaluated game_id={} turn={} safe_moves={} fallback={}",
+        "Move evaluated game_id=%s turn=%s safe_moves=%s fallback=%s",
         game_id,
         turn,
         ",".join(option["move"] for option in safe) or "none",
@@ -202,7 +190,7 @@ async def move(state: dict) -> dict[str, str]:
             chosen = result.choices["move"].choice
             if chosen in {option["move"] for option in safe}:
                 logger.info(
-                    "Decision model move selected game_id={} turn={} move={} duration_ms={:.1f}",
+                    "Decision model move selected game_id=%s turn=%s move=%s duration_ms=%.1f",
                     game_id,
                     turn,
                     chosen,
@@ -210,15 +198,15 @@ async def move(state: dict) -> dict[str, str]:
                 )
                 return {"move": chosen}
             logger.warning(
-                "Decision model returned unavailable move game_id={} turn={} move={}; using fallback={}",
+                "Decision model returned unavailable move game_id=%s turn=%s move=%s; using fallback=%s",
                 game_id,
                 turn,
                 chosen,
                 fallback,
             )
-        except Exception:  # noqa: BLE001 - any model failure must use the safe fallback
+        except Exception:
             logger.exception(
-                "Decision model move failed game_id={} turn={} duration_ms={:.1f}; using fallback={}",
+                "Decision model move failed game_id=%s turn=%s duration_ms=%.1f; using fallback=%s",
                 game_id,
                 turn,
                 (time.perf_counter() - started) * 1000,
@@ -231,7 +219,7 @@ async def move(state: dict) -> dict[str, str]:
             else f"safe_move_count_{len(safe)}"
         )
         logger.info(
-            "Deterministic move selected game_id={} turn={} move={} reason={}",
+            "Deterministic move selected game_id=%s turn=%s move=%s reason=%s",
             game_id,
             turn,
             fallback,
