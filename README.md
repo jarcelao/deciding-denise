@@ -1,6 +1,6 @@
 # Deciding Denise
 
-A Battlesnake that asks a typed decision model (e.g. Jev) to choose among moves that pass an immediate safety check. If the model is unavailable or slow, a deterministic board evaluator chooses a move.
+A Battlesnake that asks a typed decision model (e.g. Jev) to choose among moves that pass an immediate safety check. 
 
 ## Run
 
@@ -21,7 +21,11 @@ TYPESAFE_API_KEY=your_key
 # DEBUG=1
 ```
 
-The server listens on port 8000. Environment variables take precedence over `.env` values. Leave `TYPESAFE_API_KEY` unset to run with the deterministic fallback. Set `TYPESAFE_BASE_URL` to a TypeSafe-compatible API root when using another provider; the SDK default is TypeSafe's API. `DECISION_TIMEOUT_SECONDS` defaults to `0.25` and accepts a positive number of seconds. Set it to `-1` to disable the remote-model timeout.
+The server listens on port 8000. Environment variables take precedence over `.env` values.
+
+Leave `TYPESAFE_API_KEY` unset to run with only the deterministic fallback. Set `TYPESAFE_BASE_URL` to a TypeSafe-compatible API root when using another provider; the SDK default is TypeSafe's API.
+
+`DECISION_TIMEOUT_SECONDS` defaults to `0.25` and accepts a positive number of seconds. Set it to `-1` to disable the remote-model timeout.
 
 Logs go to standard error at `INFO` by default. Set `DEBUG=1` to include debug logs.
 
@@ -29,12 +33,6 @@ In Battlesnake, point the snake's URL to your publicly reachable server. For a l
 
 ```sh
 curl http://localhost:8000/
-```
-
-A move request uses the [Battlesnake move schema](https://docs.battlesnake.com/api/example-move). For example, save the JSON from that page as `temp/move.json` and run:
-
-```sh
-curl -H 'Content-Type: application/json' -d @temp/move.json http://localhost:8000/move
 ```
 
 Run tests with `uv run pytest`.
