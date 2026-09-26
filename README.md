@@ -1,6 +1,6 @@
 # Deciding Denise
 
-A Battlesnake that asks Jev to choose among moves that pass an immediate safety check. If Jev is unavailable or slow, a deterministic board evaluator chooses a move.
+A Battlesnake that asks a typed decision model (e.g. Jev) to choose among moves that pass an immediate safety check. If the model is unavailable or slow, a deterministic board evaluator chooses a move.
 
 ## Run
 

@@ -1,7 +1,7 @@
 [project]
 name = "deciding-denise"
 version = "0.1.0"
-description = "Add your description here"
+description = "Battlesnake powered by typed decision models"
 readme = "README.md"
 authors = [
     { name = "Jericho Arcelao", email = "jerichoarcelao@gmail.com" }
