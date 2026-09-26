@@ -1,2 +1,7 @@
+"""Jev-powered Battlesnake."""
+
+
 def main() -> None:
-    print("Hello from deciding-denise!")
+    import uvicorn
+
+    uvicorn.run("deciding_denise.app:app", host="0.0.0.0", port=8000)

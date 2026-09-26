@@ -1,0 +1,38 @@
+# Deciding Denise
+
+A Battlesnake that asks Jev to choose among moves that pass an immediate safety check. If Jev is unavailable or slow, a deterministic board evaluator chooses a move.
+
+## Run
+
+Requires Python 3.12 and `uv`.
+
+```sh
+uv sync
+cp .env.example .env
+uv run deciding-denise
+```
+
+Set your key in `.env` in the directory where you run the server:
+
+```dotenv
+TYPESAFE_API_KEY=your_key
+# TYPESAFE_BASE_URL=https://your-compatible-api-root
+```
+
+The server listens on port 8000. Environment variables take precedence over `.env` values. Leave `TYPESAFE_API_KEY` unset to run with the deterministic fallback. Set `TYPESAFE_BASE_URL` to a TypeSafe-compatible API root when using another provider; the SDK default is TypeSafe's API.
+
+In Battlesnake, point the snake's URL to your publicly reachable server. For a local smoke check:
+
+```sh
+curl http://localhost:8000/
+```
+
+A move request uses the [Battlesnake move schema](https://docs.battlesnake.com/api/example-move). For example, save the JSON from that page as `temp/move.json` and run:
+
+```sh
+curl -H 'Content-Type: application/json' -d @temp/move.json http://localhost:8000/move
+```
+
+Run tests with `uv run pytest`.
+
+This prototype targets standard boards. It checks immediate collisions, hazard damage, and possible head-to-head losses, then lets Jev pick among safe moves. It does not simulate future turns.

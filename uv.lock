@@ -80,6 +80,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi", extra = ["standard"] },
+    { name = "python-dotenv" },
     { name = "typesafe-sdk" },
 ]
 
@@ -93,6 +94,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", extras = ["standard"], specifier = ">=0.141.1" },
+    { name = "python-dotenv", specifier = ">=1.2.3" },
     { name = "typesafe-sdk", specifier = ">=0.7.1" },
 ]
 
