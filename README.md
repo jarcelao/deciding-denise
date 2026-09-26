@@ -21,20 +21,6 @@ TYPESAFE_API_KEY=your_key
 # DEBUG=1
 ```
 
-The server listens on port 8000. Environment variables take precedence over `.env` values.
-
-Leave `TYPESAFE_API_KEY` unset to run with only the deterministic fallback. Set `TYPESAFE_BASE_URL` to a TypeSafe-compatible API root when using another provider; the SDK default is TypeSafe's API.
-
-`DECISION_TIMEOUT_SECONDS` defaults to `0.25` and accepts a positive number of seconds. Set it to `-1` to disable the remote-model timeout.
-
-Logs go to standard error at `INFO` by default. Set `DEBUG=1` to include debug logs.
-
-In Battlesnake, point the snake's URL to your publicly reachable server. For a local smoke check:
-
-```sh
-curl http://localhost:8000/
-```
-
 Run tests with `uv run pytest`.
 
 This prototype targets standard boards. It checks immediate collisions, hazard damage, and possible head-to-head losses, then lets Jev pick among safe moves. It does not simulate future turns.
