@@ -1,10 +1,10 @@
 # Deciding Denise
 
-A Battlesnake that asks a typed decision model (e.g. Jev) to choose among moves that pass an immediate safety check. 
+A Battlesnake that chooses moves made by a typed decision model (e.g. Jev).
 
 ## Run
 
-Requires Python 3.12 and `uv`.
+Requires Python 3.13 and `uv`.
 
 ```sh
 uv sync
