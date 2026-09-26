@@ -2,12 +2,14 @@
 
 from collections import deque
 from dataclasses import dataclass
+import re
 from time import monotonic
 from typing import TypedDict
 
 from typesafe_sdk import Choice
 
 DIRECTIONS = {"up": (0, 1), "right": (1, 0), "down": (0, -1), "left": (-1, 0)}
+SUPPORTED_RULESET_VERSION = re.compile(r"v1\.\d+\.\d+\Z")
 
 
 class SnakeOutcome(TypedDict):
@@ -104,9 +106,16 @@ def supported_duel(state):
     rules = game["ruleset"]
     settings = rules.get("settings", {})
     snakes = state["board"]["snakes"]
+    version = rules.get("version", "cli")
     return (
         rules.get("name") == "standard"
-        and rules.get("version", "cli") in {"cli", "1"}
+        and (
+            version == "cli"
+            or (
+                isinstance(version, str)
+                and SUPPORTED_RULESET_VERSION.fullmatch(version) is not None
+            )
+        )
         and game.get("map", "standard") == "standard"
         and len(snakes) == 2
         and not settings.get("wrapped", False)
