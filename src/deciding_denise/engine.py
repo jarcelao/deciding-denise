@@ -99,14 +99,14 @@ def solo_model_input(state, cards):
     return compact, question
 
 
-def supported(state):
+def supported_duel(state):
     game = state["game"]
     rules = game["ruleset"]
     settings = rules.get("settings", {})
     snakes = state["board"]["snakes"]
     return (
         rules.get("name") == "standard"
-        and rules.get("version", "cli") == "cli"
+        and rules.get("version", "cli") in {"cli", "1"}
         and game.get("map", "standard") == "standard"
         and len(snakes) == 2
         and not settings.get("wrapped", False)
@@ -275,7 +275,7 @@ class TurnAnalysis:
 
 
 def analyze_turn(state, deadline=None):
-    if not supported(state):
+    if not supported_duel(state):
         raise ValueError("unsupported game: expected standard non-wrapped duel")
     started = monotonic()
     you_id = state["you"]["id"]
@@ -344,4 +344,3 @@ def model_input(state, analysis):
         criteria={m: f"Move {m}; evidence is in cards.{m}" for m in analysis.offered},
     )
     return compact, question
-

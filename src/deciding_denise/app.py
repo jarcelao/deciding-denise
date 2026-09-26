@@ -33,12 +33,17 @@ class RequestIdFilter(logging.Filter):
         return True
 
 
+class OneLineFormatter(logging.Formatter):
+    def formatException(self, exc_info) -> str:
+        return " | ".join(super().formatException(exc_info).splitlines())
+
+
 def configure_logging() -> None:
     debug = os.getenv("DEBUG", "").lower() in {"1", "true", "yes", "on"}
     handler = logging.StreamHandler(sys.stderr)
     handler.addFilter(RequestIdFilter())
     handler.setFormatter(
-        logging.Formatter(
+        OneLineFormatter(
             "%(asctime)s | %(levelname)-8s | request_id=%(request_id)s | %(message)s"
         )
     )
