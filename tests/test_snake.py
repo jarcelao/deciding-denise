@@ -53,7 +53,7 @@ def enemy(head, length=3):
     }
 
 
-class FakeJev:
+class FakeDecisionModel:
     def __init__(self, choice=None, error=None):
         self.choice = choice
         self.error = error
@@ -66,10 +66,10 @@ class FakeJev:
         return SimpleNamespace(choices={"move": SimpleNamespace(choice=self.choice)})
 
 
-def test_webhooks_and_jev_choice():
+def test_webhooks_and_decision_model_choice():
     with TestClient(app) as client:
-        fake = FakeJev("left")
-        app.state.jev_client = fake
+        fake = FakeDecisionModel("left")
+        app.state.decision_model_client = fake
         assert client.get("/").json()["apiversion"] == "1"
         assert client.post("/start", json=state()).status_code == 200
         response = client.post("/move", json=state())
@@ -99,12 +99,15 @@ def test_hazard_and_starvation():
 
 def test_invalid_choice_and_error_fall_back():
     with TestClient(app) as client:
-        for fake in [FakeJev("down"), FakeJev(error=TimeoutError())]:
-            app.state.jev_client = fake
+        for fake in [
+            FakeDecisionModel("down"),
+            FakeDecisionModel(error=TimeoutError()),
+        ]:
+            app.state.decision_model_client = fake
             result = client.post("/move", json=state()).json()
             assert result["move"] in {"up", "left", "right"}
             assert result["move"] != "down"
-        app.state.jev_client = None
+        app.state.decision_model_client = None
         assert client.post("/move", json=state()).json()["move"] in {
             "up",
             "left",

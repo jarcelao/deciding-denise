@@ -16,7 +16,7 @@ from httpx2 import Timeout
 from loguru import logger
 from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
 
-from .brain import candidates, jev_input, rank
+from .brain import candidates, decision_model_input, rank
 
 DEFAULT_DECISION_TIMEOUT_SECONDS = 0.25
 
@@ -62,7 +62,7 @@ def configure_logging() -> None:
         uvicorn_logger.setLevel(logging.DEBUG if debug else logging.INFO)
 
 
-def jev_timeout() -> float | Timeout:
+def decision_model_timeout() -> float | Timeout:
     seconds = float(
         os.getenv("DECISION_TIMEOUT_SECONDS", str(DEFAULT_DECISION_TIMEOUT_SECONDS))
     )
@@ -78,12 +78,12 @@ async def lifespan(app: FastAPI):
     load_dotenv(Path.cwd() / ".env")
     configure_logging()
     logger.info("Application starting")
-    app.state.jev_client = None
+    app.state.decision_model_client = None
     if os.getenv("TYPESAFE_API_KEY"):
-        timeout = jev_timeout()
+        timeout = decision_model_timeout()
         base_url = os.getenv("TYPESAFE_BASE_URL")
         logger.info(
-            "Jev client configured endpoint={} timeout_seconds={}",
+            "Decision model client configured endpoint={} timeout_seconds={}",
             "custom" if base_url else "sdk-default",
             "disabled" if isinstance(timeout, Timeout) else timeout,
         )
@@ -94,12 +94,12 @@ async def lifespan(app: FastAPI):
                 retry=RetryPolicy(max_retries=0),
                 timeout=timeout,
             ) as client:
-                app.state.jev_client = client
+                app.state.decision_model_client = client
                 yield
         finally:
             logger.info("Application stopping")
     else:
-        logger.info("Jev client not configured; deterministic fallback enabled")
+        logger.info("Decision model client not configured; deterministic fallback enabled")
         try:
             yield
         finally:
@@ -171,7 +171,7 @@ async def move(state: dict) -> dict[str, str]:
     options = candidates(state)
     safe = rank(state, [o for o in options if o["safe"]])
     fallback = safe[0]["move"] if safe else rank(state, options)[0]["move"]
-    client = getattr(app.state, "jev_client", None)
+    client = getattr(app.state, "decision_model_client", None)
     game_id = state.get("game", {}).get("id", "unknown")
     turn = state.get("turn", "unknown")
     logger.info(
@@ -182,19 +182,19 @@ async def move(state: dict) -> dict[str, str]:
         fallback,
     )
     if client is not None and len(safe) > 1:
-        compact, question = jev_input(state, safe)
+        compact, question = decision_model_input(state, safe)
         started = time.perf_counter()
         try:
             result = await client.system_one(
                 compact,
                 {"move": question},
-                timeout=jev_timeout(),
+                timeout=decision_model_timeout(),
                 retry=RetryPolicy(max_retries=0),
             )
             chosen = result.choices["move"].choice
             if chosen in {option["move"] for option in safe}:
                 logger.info(
-                    "Jev move selected game_id={} turn={} move={} duration_ms={:.1f}",
+                    "Decision model move selected game_id={} turn={} move={} duration_ms={:.1f}",
                     game_id,
                     turn,
                     chosen,
@@ -202,7 +202,7 @@ async def move(state: dict) -> dict[str, str]:
                 )
                 return {"move": chosen}
             logger.warning(
-                "Jev returned unavailable move game_id={} turn={} move={}; using fallback={}",
+                "Decision model returned unavailable move game_id={} turn={} move={}; using fallback={}",
                 game_id,
                 turn,
                 chosen,
@@ -210,7 +210,7 @@ async def move(state: dict) -> dict[str, str]:
             )
         except Exception:
             logger.exception(
-                "Jev move failed game_id={} turn={} duration_ms={:.1f}; using fallback={}",
+                "Decision model move failed game_id={} turn={} duration_ms={:.1f}; using fallback={}",
                 game_id,
                 turn,
                 (time.perf_counter() - started) * 1000,
@@ -218,7 +218,7 @@ async def move(state: dict) -> dict[str, str]:
             )
     elif client is None:
         logger.info(
-            "Deterministic move selected game_id={} turn={} move={} reason=no_jev_client",
+            "Deterministic move selected game_id={} turn={} move={} reason=no_decision_model_client",
             game_id,
             turn,
             fallback,

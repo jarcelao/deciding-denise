@@ -1,4 +1,4 @@
-"""Jev-powered Battlesnake."""
+"""Battlesnake decision model."""
 
 
 def main() -> None:

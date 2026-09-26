@@ -1,4 +1,4 @@
-"""Deterministic move safety and Jev decision input."""
+"""Deterministic move safety and decision model input."""
 
 from collections import deque
 
@@ -97,7 +97,7 @@ def rank(state: dict, options: list[dict]) -> list[dict]:
     return sorted(options, key=key)
 
 
-def jev_input(state: dict, safe: list[dict]) -> tuple[dict, Choice]:
+def decision_model_input(state: dict, safe: list[dict]) -> tuple[dict, Choice]:
     board = state["board"]
     you = state["you"]
     compact = {
