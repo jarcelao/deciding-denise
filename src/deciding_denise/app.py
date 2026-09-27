@@ -65,14 +65,17 @@ async def lifespan(app: FastAPI):
     app.state.decision_model_client = None
     if os.getenv("TYPESAFE_API_KEY"):
         base_url = os.getenv("TYPESAFE_BASE_URL")
+        model = os.getenv("TYPESAFE_MODEL")
         logger.info(
-            "Decision model client configured endpoint=%s; game deadline enforced per move",
+            "Decision model client configured endpoint=%s model=%s",
             "custom" if base_url else "sdk-default",
+            "custom" if model else "sdk-default",
         )
         try:
             async with AsyncTypeSafeClient(
                 api_key=os.environ["TYPESAFE_API_KEY"],
                 base_url=base_url,
+                model=model,
                 retry=RetryPolicy(max_retries=0),
                 timeout=Timeout(None),
             ) as client:

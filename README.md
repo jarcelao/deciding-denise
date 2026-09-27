@@ -15,8 +15,10 @@ uv run deciding-denise
 Set your key in `.env` in the directory where you run the server:
 
 ```dotenv
-TYPESAFE_API_KEY=your_key
-# TYPESAFE_BASE_URL=https://your-compatible-api-root
+TYPESAFE_API_KEY='your_key'
+# TYPESAFE_BASE_URL='https://your-compatible-api-root'
+# TYPESAFE_MODEL='your-model-name'
+
 # DEBUG=1
 ```
 
