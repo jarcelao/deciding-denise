@@ -1,6 +1,8 @@
 # Deciding Denise
 
-![Denise (purple) winning a duel](media/demo.gif)
+<p align="center">
+  <img src="media/demo.gif" width=50% />
+</p>
 
 Denise is a Battlesnake. A search engine scores every legal move, then a typed decision model (such as Jev) makes the final pick. It plays standard duels and solo games. Games with three or more snakes are not supported.
 
