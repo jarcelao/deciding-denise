@@ -1,6 +1,5 @@
 """One-turn Battlesnake evidence and decision inputs."""
 
-import re
 from collections import deque
 from dataclasses import dataclass
 from time import monotonic
@@ -8,13 +7,18 @@ from typing import TypedDict
 
 from typesafe_sdk import Choice
 
-from .search import LOSS, STEPS, root_values
+from .constants import (
+    DEFAULT_HAZARD_DAMAGE,
+    FORCED_LOSS,
+    MAX_HEALTH,
+    SEARCH_DEPTH,
+    SEARCH_MARGIN_MS,
+    STEPS,
+    SUPPORTED_RULESET_VERSION,
+)
+from .search import root_values
 
 DIRECTIONS = STEPS
-SEARCH_DEPTH = 8  # iterative deepening stops at the deadline, usually well before this
-FORCED_LOSS = LOSS + 100  # search values at or below this are lost against best play
-SEARCH_MARGIN_S = 0.1  # search stops early; must exceed OS scheduling stalls (80-130 ms seen under load)
-SUPPORTED_RULESET_VERSION = re.compile(r"v1\.\d+\.\d+\Z")
 
 
 class SnakeOutcome(TypedDict):
@@ -62,7 +66,11 @@ def solo_cards(state):
     body = [point(p) for p in snake["body"]]
     occupied = set(body[:-1])
     cards = {}
-    damage = state["game"]["ruleset"].get("settings", {}).get("hazardDamagePerTurn", 14)
+    damage = (
+        state["game"]["ruleset"]
+        .get("settings", {})
+        .get("hazardDamagePerTurn", DEFAULT_HAZARD_DAMAGE)
+    )
     for move, (dx, dy) in DIRECTIONS.items():
         dest = (snake["head"]["x"] + dx, snake["head"]["y"] + dy)
         if not (0 <= dest[0] < board["width"] and 0 <= dest[1] < board["height"]):
@@ -131,7 +139,7 @@ def supported_duel(state):
         and game.get("map", "standard") == "standard"
         and len(snakes) == 2
         and not settings.get("wrapped", False)
-        and settings.get("hazardDamagePerTurn", 14) >= 0
+        and settings.get("hazardDamagePerTurn", DEFAULT_HAZARD_DAMAGE) >= 0
         and len({s["id"] for s in snakes}) == 2
         and state["you"]["id"] in {s["id"] for s in snakes}
     )
@@ -148,7 +156,11 @@ def simulate(state, our_move, their_move) -> dict[str, SnakeOutcome]:
     }
     food = {point(p) for p in board["food"]}
     hazards = {point(p) for p in board.get("hazards", [])}
-    damage = state["game"]["ruleset"].get("settings", {}).get("hazardDamagePerTurn", 14)
+    damage = (
+        state["game"]["ruleset"]
+        .get("settings", {})
+        .get("hazardDamagePerTurn", DEFAULT_HAZARD_DAMAGE)
+    )
     result: dict[str, SnakeOutcome] = {}
     for snake in snakes:
         sid = snake["id"]
@@ -164,7 +176,7 @@ def simulate(state, our_move, their_move) -> dict[str, SnakeOutcome]:
         if dest in hazards and not ate:
             health = max(0, health - damage)
         if ate:
-            health = 100
+            health = MAX_HEALTH
         result[sid] = {
             "head": dest,
             "body": body,
@@ -293,6 +305,7 @@ class TurnAnalysis:
     cards: dict[str, MoveEvidence]
     offered: list[str]
     elapsed_ms: float
+    depth: int
 
 
 def analyze_turn(state, deadline=None):
@@ -303,7 +316,11 @@ def analyze_turn(state, deadline=None):
     started = monotonic()
     you_id = state["you"]["id"]
     enemy_id = next(s["id"] for s in state["board"]["snakes"] if s["id"] != you_id)
-    damage = state["game"]["ruleset"].get("settings", {}).get("hazardDamagePerTurn", 14)
+    damage = (
+        state["game"]["ruleset"]
+        .get("settings", {})
+        .get("hazardDamagePerTurn", DEFAULT_HAZARD_DAMAGE)
+    )
     outcomes_by_move: dict[str, list[OutcomeEvidence]] = {}
     for move in DIRECTIONS:
         outcomes = outcomes_by_move[move] = []
@@ -326,7 +343,9 @@ def analyze_turn(state, deadline=None):
                 }
             )
     table, depth = root_values(
-        state, SEARCH_DEPTH, None if deadline is None else deadline - SEARCH_MARGIN_S
+        state,
+        SEARCH_DEPTH,
+        None if deadline is None else deadline - SEARCH_MARGIN_MS / 1000,
     )
     cards: dict[str, MoveEvidence] = {
         move: {
@@ -351,7 +370,7 @@ def analyze_turn(state, deadline=None):
     ] or list(DIRECTIONS)
     holding = [m for m in offered if cards[m]["search"]["value"] > FORCED_LOSS]
     offered = holding or offered
-    return TurnAnalysis(cards, offered, (monotonic() - started) * 1000)
+    return TurnAnalysis(cards, offered, (monotonic() - started) * 1000, depth)
 
 
 def model_input(state, analysis):

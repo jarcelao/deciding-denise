@@ -2,20 +2,17 @@
 
 import asyncio
 import logging
-import os
 import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from pathlib import Path
 
-from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from httpx2 import Timeout
 from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
 
-from . import config
+from . import constants as c
 from .engine import (
     analyze_turn,
     model_input,
@@ -25,7 +22,6 @@ from .engine import (
 
 request_id_context: ContextVar[str] = ContextVar("request_id", default="-")
 logger = logging.getLogger(__name__)
-MODEL_MIN_S = 0.25  # analysis leaves the decision model at least this long
 
 
 class RequestIdFilter(logging.Filter):
@@ -40,7 +36,7 @@ class OneLineFormatter(logging.Formatter):
 
 
 def configure_logging() -> None:
-    debug = os.getenv("DEBUG", "").lower() in {"1", "true", "yes", "on"}
+    debug = c.DEBUG
     handler = logging.StreamHandler(sys.stderr)
     handler.addFilter(RequestIdFilter())
     handler.setFormatter(
@@ -60,13 +56,11 @@ def configure_logging() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    load_dotenv(Path.cwd() / ".env")
     configure_logging()
     logger.info("Application starting")
     app.state.decision_model_client = None
-    if os.getenv("TYPESAFE_API_KEY"):
-        base_url = os.getenv("TYPESAFE_BASE_URL")
-        model = os.getenv("TYPESAFE_MODEL")
+    if c.TYPESAFE_API_KEY:
+        base_url, model = c.TYPESAFE_BASE_URL, c.TYPESAFE_MODEL
         logger.info(
             "Decision model client configured endpoint=%s model=%s",
             "custom" if base_url else "sdk-default",
@@ -74,7 +68,7 @@ async def lifespan(app: FastAPI):
         )
         try:
             async with AsyncTypeSafeClient(
-                api_key=os.environ["TYPESAFE_API_KEY"],
+                api_key=c.TYPESAFE_API_KEY,
                 base_url=base_url,
                 model=model,
                 retry=RetryPolicy(max_retries=0),
@@ -99,7 +93,9 @@ app = FastAPI(lifespan=lifespan)
 async def log_requests(request: Request, call_next):
     supplied_id = request.headers.get("x-request-id", "")
     request_id = (
-        "".join(char for char in supplied_id if char.isalnum() or char in "-_")[:64]
+        "".join(char for char in supplied_id if char.isalnum() or char in "-_")[
+            : c.REQUEST_ID_MAX_LEN
+        ]
         or uuid.uuid4().hex
     )
     started = time.perf_counter()
@@ -137,10 +133,10 @@ async def details() -> dict:
     logger.debug("Snake details requested")
     return {
         "apiversion": "1",
-        "author": config.AUTHOR,
-        "color": config.COLOR,
-        "head": config.HEAD,
-        "tail": config.TAIL,
+        "author": c.AUTHOR,
+        "color": c.COLOR,
+        "head": c.HEAD,
+        "tail": c.TAIL,
     }
 
 
@@ -166,10 +162,11 @@ async def end(state: dict | None = None) -> dict:
 @app.post("/move")
 async def move(state: dict, request: Request) -> dict[str, str]:
     started = request.state.started_monotonic
-    timeout_ms = state.get("game", {}).get("timeout", 500)
-    reserve_ms = float(os.getenv("DENISE_TRANSPORT_RESERVE_MS", "125"))
-    cutoff = started + max(0, timeout_ms - reserve_ms) / 1000
+    timeout_ms = state.get("game", {}).get("timeout", c.DEFAULT_TIMEOUT_MS)
+    cutoff = started + max(0, timeout_ms - c.TRANSPORT_RESERVE_MS) / 1000
     fallback = None
+    model_min = c.MODEL_MIN_MS / 1000
+    depth = 0  # solo games don't search
     try:
         if len(state["board"]["snakes"]) == 1:
             cards = solo_cards(state)
@@ -177,27 +174,27 @@ async def move(state: dict, request: Request) -> dict[str, str]:
             compact, question = solo_model_input(state, cards)
             analysis_ms = 0.0
         else:
-            analysis = await asyncio.to_thread(
-                analyze_turn, state, cutoff - MODEL_MIN_S
-            )
+            analysis = await asyncio.to_thread(analyze_turn, state, cutoff - model_min)
             offered = analysis.offered
             compact, question = model_input(state, analysis)
             analysis_ms = analysis.elapsed_ms
+            depth = analysis.depth
             fallback = max(offered, key=lambda m: analysis.cards[m]["search"]["value"])
         if len(offered) == 1:
             return {"move": offered[0]}
-        if cutoff - time.monotonic() < MODEL_MIN_S:
+        if cutoff - time.monotonic() < model_min:
             if fallback:
                 logger.warning(
-                    "Analysis overran, using best search move game_id=%s turn=%s move=%s analysis_ms=%.1f",
+                    "Analysis overran, using best search move game_id=%s turn=%s move=%s analysis_ms=%.1f search_depth=%s",
                     state["game"]["id"],
                     state["turn"],
                     fallback,
                     analysis_ms,
+                    depth,
                 )
                 return {"move": fallback}
             raise TimeoutError(
-                f"less than {MODEL_MIN_S * 1000:.0f} ms remains for decision model"
+                f"less than {c.MODEL_MIN_MS:.0f} ms remains for decision model"
             )
         client = getattr(app.state, "decision_model_client", None)
         if client is None:
@@ -212,11 +209,12 @@ async def move(state: dict, request: Request) -> dict[str, str]:
             raise ValueError(f"Decision model chose unavailable move: {chosen}")
         usage = getattr(result, "usage", None)
         logger.info(
-            "Engine move selected game_id=%s turn=%s move=%s analysis_ms=%.1f confidence=%s probabilities=%s model=%s input_tokens=%s output_tokens=%s",
+            "Engine move selected game_id=%s turn=%s move=%s analysis_ms=%.1f search_depth=%s confidence=%s probabilities=%s model=%s input_tokens=%s output_tokens=%s",
             state["game"]["id"],
             state["turn"],
             chosen,
             analysis_ms,
+            depth,
             getattr(answer, "confidence", None),
             getattr(answer, "probabilities", None),
             getattr(result, "model", None),

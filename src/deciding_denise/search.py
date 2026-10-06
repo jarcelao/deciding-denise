@@ -7,8 +7,24 @@ plain tuples so a few plies fit in a turn.
 from collections import namedtuple
 from time import monotonic
 
-WIN, LOSS, DRAW = 1000, -1000, -100
-STEPS = {"up": (0, 1), "right": (1, 0), "down": (0, -1), "left": (-1, 0)}
+from .constants import (
+    DEFAULT_HAZARD_DAMAGE,
+    DRAW,
+    FOOD_WEIGHT,
+    FORCED_LOSS,
+    FORCED_WIN,
+    HUNGER_WEIGHT,
+    HUNGRY_HEALTH,
+    INF,
+    LENGTH_WEIGHT,
+    LOSS,
+    MAX_HEALTH,
+    STARVING_WEIGHT,
+    STEPS,
+    TRAPPED_PENALTY,
+    TRAPPED_PER_CELL,
+    WIN,
+)
 
 
 class Board:
@@ -69,7 +85,7 @@ def advance(board, body, hp, move, food):
     new = (head, *body[:-1])
     if ate:
         new += (new[-1],)
-    hp = 100 if ate else hp - 1 - (board.damage if head in board.hazards else 0)
+    hp = MAX_HEALTH if ate else hp - 1 - (board.damage if head in board.hazards else 0)
     return new, hp, ate
 
 
@@ -140,16 +156,18 @@ def territory(board, node):
 
 def evaluate(board, node):
     my_cells, their_cells, my_food, their_food = territory(board, node)
-    score = my_cells - their_cells + 3 * (len(node.mine) - len(node.theirs))
-    score += 4 * (my_food - their_food)
+    score = my_cells - their_cells + LENGTH_WEIGHT * (len(node.mine) - len(node.theirs))
+    score += FOOD_WEIGHT * (my_food - their_food)
     if my_cells < len(node.mine):
-        score -= 30 + 5 * (len(node.mine) - my_cells)
+        score -= TRAPPED_PENALTY + TRAPPED_PER_CELL * (len(node.mine) - my_cells)
     if their_cells < len(node.theirs):
-        score += 30 + 5 * (len(node.theirs) - their_cells)
-    if node.mine_hp < 40:
-        score -= (40 - node.mine_hp) * (1 if my_food else 3)
+        score += TRAPPED_PENALTY + TRAPPED_PER_CELL * (len(node.theirs) - their_cells)
+    if node.mine_hp < HUNGRY_HEALTH:
+        score -= (HUNGRY_HEALTH - node.mine_hp) * (
+            HUNGER_WEIGHT if my_food else STARVING_WEIGHT
+        )
     # stay strictly between the forced win/loss bands so a heuristic never reads as proof
-    return max(LOSS + 101, min(WIN - 101, score))
+    return max(FORCED_LOSS + 1, min(FORCED_WIN - 1, score))
 
 
 def terminal(result, ply):
@@ -165,9 +183,9 @@ def value(board, node, depth, alpha, beta, deadline, ply=1):
         raise TimeoutError
     blocked = free_times(node.mine, node.theirs)
     their_moves = legal_moves(board, node.theirs, blocked)
-    best = -(10**6)
+    best = -INF
     for mine in legal_moves(board, node.mine, blocked):
-        worst = 10**6
+        worst = INF
         for theirs in their_moves:
             result, nxt = step(board, node, mine, theirs)
             if result is None:
@@ -199,7 +217,11 @@ def build(state):
     me = snakes[you]
     them = next(s for sid, s in snakes.items() if sid != you)
     body = lambda s: tuple((p["x"], p["y"]) for p in s["body"])
-    damage = state["game"]["ruleset"].get("settings", {}).get("hazardDamagePerTurn", 14)
+    damage = (
+        state["game"]["ruleset"]
+        .get("settings", {})
+        .get("hazardDamagePerTurn", DEFAULT_HAZARD_DAMAGE)
+    )
     board = Board(
         b["width"],
         b["height"],
@@ -230,13 +252,13 @@ def root_values(state, max_depth, deadline):
                     table[mine][theirs] = (
                         terminal(res, 1)
                         if res is not None
-                        else value(board, nxt, depth - 1, -(10**6), 10**6, deadline, 2)
+                        else value(board, nxt, depth - 1, -INF, INF, deadline, 2)
                     )
         except TimeoutError:
             break
         result, depth_done = table, depth
         scores = [min(replies.values()) for replies in table.values()]
         # a forced win, or at most one move left that doesn't lose, is settled for good
-        if max(scores) >= WIN - 100 or sum(v > LOSS + 100 for v in scores) <= 1:
+        if max(scores) >= FORCED_WIN or sum(v > FORCED_LOSS for v in scores) <= 1:
             break
     return result, depth_done
