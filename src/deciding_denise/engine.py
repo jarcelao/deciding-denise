@@ -1,14 +1,19 @@
 """One-turn Battlesnake evidence and decision inputs."""
 
+import re
 from collections import deque
 from dataclasses import dataclass
-import re
 from time import monotonic
 from typing import TypedDict
 
 from typesafe_sdk import Choice
 
-DIRECTIONS = {"up": (0, 1), "right": (1, 0), "down": (0, -1), "left": (-1, 0)}
+from .search import LOSS, STEPS, root_values
+
+DIRECTIONS = STEPS
+SEARCH_DEPTH = 8  # iterative deepening stops at the deadline, usually well before this
+FORCED_LOSS = LOSS + 100  # search values at or below this are lost against best play
+SEARCH_MARGIN_S = 0.1  # search stops early; must exceed OS scheduling stalls (80-130 ms seen under load)
 SUPPORTED_RULESET_VERSION = re.compile(r"v1\.\d+\.\d+\Z")
 
 
@@ -33,10 +38,17 @@ class OutcomeEvidence(TypedDict):
     food: dict | None
 
 
+class SearchEvidence(TypedDict):
+    depth: int
+    value: int
+    by_reply: dict[str, int]
+
+
 class MoveEvidence(TypedDict):
     destination: list[int]
     outcomes: list[OutcomeEvidence]
     surviving_replies: int
+    search: SearchEvidence
 
 
 def point(value) -> tuple[int, int]:
@@ -284,18 +296,18 @@ class TurnAnalysis:
 
 
 def analyze_turn(state, deadline=None):
+    """Evidence per move. `deadline` (monotonic) bounds only the search, which always
+    finishes at least one ply, so a late call still returns evidence."""
     if not supported_duel(state):
         raise ValueError("unsupported game: expected standard non-wrapped duel")
     started = monotonic()
     you_id = state["you"]["id"]
     enemy_id = next(s["id"] for s in state["board"]["snakes"] if s["id"] != you_id)
     damage = state["game"]["ruleset"].get("settings", {}).get("hazardDamagePerTurn", 14)
-    cards: dict[str, MoveEvidence] = {}
-    for move, (dx, dy) in DIRECTIONS.items():
-        outcomes: list[OutcomeEvidence] = []
+    outcomes_by_move: dict[str, list[OutcomeEvidence]] = {}
+    for move in DIRECTIONS:
+        outcomes = outcomes_by_move[move] = []
         for reply in DIRECTIONS:
-            if deadline is not None and monotonic() >= deadline:
-                raise TimeoutError("analysis deadline")
             result = simulate(state, move, reply)
             ours, enemy = result[you_id], result[enemy_id]
             outcomes.append(
@@ -313,22 +325,40 @@ def analyze_turn(state, deadline=None):
                     "food": food_route(state["board"], result, you_id, damage),
                 }
             )
-        cards[move] = {
+    table, depth = root_values(
+        state, SEARCH_DEPTH, None if deadline is None else deadline - SEARCH_MARGIN_S
+    )
+    cards: dict[str, MoveEvidence] = {
+        move: {
             "destination": [
                 state["you"]["head"]["x"] + dx,
                 state["you"]["head"]["y"] + dy,
             ],
-            "outcomes": outcomes,
-            "surviving_replies": sum(o["our_reason"] is None for o in outcomes),
+            "outcomes": outcomes_by_move[move],
+            "surviving_replies": sum(
+                o["our_reason"] is None for o in outcomes_by_move[move]
+            ),
+            "search": {
+                "depth": depth,
+                "value": min(table[move].values()),
+                "by_reply": table[move],
+            },
         }
+        for move, (dx, dy) in DIRECTIONS.items()
+    }
     offered = [
         move for move, card in cards.items() if card["surviving_replies"]
     ] or list(DIRECTIONS)
+    holding = [m for m in offered if cards[m]["search"]["value"] > FORCED_LOSS]
+    offered = holding or offered
     return TurnAnalysis(cards, offered, (monotonic() - started) * 1000)
 
 
 def model_input(state, analysis):
     board = state["board"]
+    lost = all(
+        analysis.cards[m]["search"]["value"] <= FORCED_LOSS for m in analysis.offered
+    )
     compact = {
         "turn": state["turn"],
         "rules": state["game"]["ruleset"],
@@ -346,10 +376,15 @@ def model_input(state, analysis):
         "food": board["food"],
         "hazards": board.get("hazards", []),
         "cards": {m: analysis.cards[m] for m in analysis.offered},
-        "assumptions": "All four opponent replies are possibilities, not probabilities. Mobility and food routes use static post-turn occupancy; future movement and food spawning are unknown. A pre-food margin of zero can be viable on arrival.",
+        "assumptions": "All four opponent replies are possibilities, not probabilities. Mobility and food routes use static post-turn occupancy; future movement and food spawning are unknown. A pre-food margin of zero can be viable on arrival. cards.<move>.search is a worst-case minimax over both snakes' next few moves (search.depth plies): +1000 minus plies is a forced win, -1000 plus plies a forced loss, anything else scores territory (cells reached first), length, food and health, higher is better for Denise. "
+        + (
+            "Every offered move loses by force against best play; the highest search.value loses slowest."
+            if lost
+            else "Moves that lose by force have already been removed from the cards."
+        ),
     }
     question = Choice(
-        instructions="Which offered move gives Denise the best chance to win this duel? Use exact immediate outcomes and approximate positional evidence. Choose only an offered direction.",
+        instructions="Which offered move gives Denise the best chance to win this duel? Choose the move with the highest cards.<move>.search.value; only prefer a lower-valued move when the exact outcomes or food and mobility evidence clearly justify it. Choose only an offered direction.",
         criteria={m: f"Move {m}; evidence is in cards.{m}" for m in analysis.offered},
     )
     return compact, question

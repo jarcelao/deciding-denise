@@ -251,3 +251,58 @@ def test_engine_eliminated_opponent_body_does_not_collide():
     outcome = simulate(board, "up", "right")
     assert outcome["enemy"]["reason"] == "wall"
     assert outcome["me"]["reason"] is None
+
+
+def test_search_prunes_move_that_loses_by_force():
+    from deciding_denise.engine import analyze_turn
+
+    # "down" survives this turn but the search proves it loses; "up" holds.
+    board = state(
+        head=(3, 2),
+        body=[(3, 2), (2, 2), (2, 3), (1, 3)],
+        width=4,
+        height=4,
+        enemies=[enemy((1, 1))],
+    )
+    analysis = analyze_turn(board)
+    assert analysis.cards["down"]["surviving_replies"] > 0
+    assert analysis.cards["down"]["search"]["value"] <= -900
+    assert "down" not in analysis.offered
+    assert "up" in analysis.offered
+
+
+def test_analysis_honours_deadline_and_still_returns_evidence():
+    from time import monotonic
+
+    from deciding_denise.engine import analyze_turn
+
+    board = state(width=11, height=11, enemies=[enemy((8, 8))])
+    started = monotonic()
+    analysis = analyze_turn(board, started + 0.1)
+    assert monotonic() - started < 1  # loose bound: CI runners stall
+    assert all(card["search"]["depth"] >= 1 for card in analysis.cards.values())
+    late = analyze_turn(board, started - 1)  # already past: degrades, doesn't raise
+    assert late.offered
+
+
+def test_late_analysis_returns_best_search_move_without_model():
+    board = state(enemies=[enemy((4, 4))])
+    board["game"]["timeout"] = 200  # nothing left for the model after the reserve
+    with TestClient(app) as client:
+        fake = FakeDecisionModel("right")
+        app.state.decision_model_client = fake
+        result = client.post("/move", json=board)
+        assert result.status_code == 200
+        assert result.json()["move"] in {"up", "right", "down", "left"}
+        assert not fake.calls
+
+
+def test_prompt_admits_when_every_offered_move_is_lost():
+    from deciding_denise.engine import analyze_turn, model_input
+
+    board = state(enemies=[enemy((4, 4))])
+    analysis = analyze_turn(board)
+    for card in analysis.cards.values():
+        card["search"]["value"] = -990
+    compact, _ = model_input(board, analysis)
+    assert "Every offered move loses by force" in compact["assumptions"]

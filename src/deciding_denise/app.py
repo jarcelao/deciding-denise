@@ -25,6 +25,7 @@ from .engine import (
 
 request_id_context: ContextVar[str] = ContextVar("request_id", default="-")
 logger = logging.getLogger(__name__)
+MODEL_MIN_S = 0.25  # analysis leaves the decision model at least this long
 
 
 class RequestIdFilter(logging.Filter):
@@ -168,6 +169,7 @@ async def move(state: dict, request: Request) -> dict[str, str]:
     timeout_ms = state.get("game", {}).get("timeout", 500)
     reserve_ms = float(os.getenv("DENISE_TRANSPORT_RESERVE_MS", "125"))
     cutoff = started + max(0, timeout_ms - reserve_ms) / 1000
+    fallback = None
     try:
         if len(state["board"]["snakes"]) == 1:
             cards = solo_cards(state)
@@ -175,14 +177,28 @@ async def move(state: dict, request: Request) -> dict[str, str]:
             compact, question = solo_model_input(state, cards)
             analysis_ms = 0.0
         else:
-            analysis = analyze_turn(state, cutoff)
+            analysis = await asyncio.to_thread(
+                analyze_turn, state, cutoff - MODEL_MIN_S
+            )
             offered = analysis.offered
             compact, question = model_input(state, analysis)
             analysis_ms = analysis.elapsed_ms
+            fallback = max(offered, key=lambda m: analysis.cards[m]["search"]["value"])
         if len(offered) == 1:
             return {"move": offered[0]}
-        if cutoff - time.monotonic() < 0.25:
-            raise TimeoutError("less than 250 ms remains for decision model")
+        if cutoff - time.monotonic() < MODEL_MIN_S:
+            if fallback:
+                logger.warning(
+                    "Analysis overran, using best search move game_id=%s turn=%s move=%s analysis_ms=%.1f",
+                    state["game"]["id"],
+                    state["turn"],
+                    fallback,
+                    analysis_ms,
+                )
+                return {"move": fallback}
+            raise TimeoutError(
+                f"less than {MODEL_MIN_S * 1000:.0f} ms remains for decision model"
+            )
         client = getattr(app.state, "decision_model_client", None)
         if client is None:
             raise RuntimeError("Model client unavailable")
