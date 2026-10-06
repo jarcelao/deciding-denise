@@ -1,9 +1,3 @@
-"""Fast duel search: worst-case minimax over simultaneous moves with a territory evaluation.
-
-Rules mirror engine.simulate (standard, non-wrapped, no future food spawns) but run on
-plain tuples so a few plies fit in a turn.
-"""
-
 from collections import namedtuple
 from time import monotonic
 

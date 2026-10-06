@@ -1,16 +1,10 @@
-"""Every tunable in one place.
-
-Env-configurable: values that depend on the host machine or deployment.
-Hardcoded: Battlesnake rules, identity and evaluation weights (change in code, with tests).
-"""
-
 import os
 import re
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv(Path.cwd() / ".env")  # before the env reads below
+load_dotenv(Path.cwd() / ".env")
 
 
 def _env_float(name: str, default: float) -> float:
@@ -22,10 +16,12 @@ DEBUG = os.getenv("DEBUG", "").lower() in {"1", "true", "yes", "on"}
 TYPESAFE_API_KEY = os.getenv("TYPESAFE_API_KEY")
 TYPESAFE_BASE_URL = os.getenv("TYPESAFE_BASE_URL")
 TYPESAFE_MODEL = os.getenv("TYPESAFE_MODEL")
-# Time held back from the game's timeout for network transport.
-TRANSPORT_RESERVE_MS = _env_float("DENISE_TRANSPORT_RESERVE_MS", 125)
-# Analysis leaves the decision model at least this long.
-MODEL_MIN_MS = _env_float("DENISE_MODEL_MIN_MS", 250)
+TRANSPORT_RESERVE_MS = _env_float(
+    "DENISE_TRANSPORT_RESERVE_MS", 125
+)  # time held back from the game's timeout for network transport.
+MODEL_MIN_MS = _env_float(
+    "DENISE_MODEL_MIN_MS", 250
+)  # analysis leaves the decision model at least this long.
 
 # --- Snake identity ---
 AUTHOR = "jarcelao"
@@ -46,8 +42,7 @@ DEFAULT_TIMEOUT_MS = 500
 SUPPORTED_RULESET_VERSION = re.compile(r"v1\.\d+\.\d+\Z")
 
 # --- Search ---
-# Search stops this early; must exceed OS scheduling stalls (80-130 ms seen under load).
-SEARCH_MARGIN_MS = 100
+SEARCH_MARGIN_MS = 100  # search stops this early; must exceed OS scheduling stalls
 SEARCH_DEPTH = 8  # iterative deepening stops at the deadline, usually well before this
 WIN, LOSS, DRAW = 1000, -1000, -100
 PROVEN_BAND = 100  # values within this of WIN/LOSS are forced outcomes

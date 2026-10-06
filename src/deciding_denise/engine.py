@@ -1,5 +1,3 @@
-"""One-turn Battlesnake evidence and decision inputs."""
-
 from collections import deque
 from dataclasses import dataclass
 from time import monotonic

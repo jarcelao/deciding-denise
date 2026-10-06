@@ -1,6 +1,3 @@
-"""Battlesnake decision model."""
-
-
 def main() -> None:
     import uvicorn
 

@@ -1,5 +1,3 @@
-"""Battlesnake HTTP server."""
-
 import asyncio
 import logging
 import sys
@@ -31,8 +29,8 @@ class RequestIdFilter(logging.Filter):
 
 
 class OneLineFormatter(logging.Formatter):
-    def formatException(self, exc_info) -> str:
-        return " | ".join(super().formatException(exc_info).splitlines())
+    def formatException(self, ei) -> str:
+        return " | ".join(super().formatException(ei).splitlines())
 
 
 def configure_logging() -> None:
