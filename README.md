@@ -1,25 +1,41 @@
 # Deciding Denise
 
-A Battlesnake that chooses moves made by a typed decision model (e.g. Jev).
+![Denise (purple) winning a duel](media/demo.gif)
 
-## Run
+Denise is a Battlesnake. A search engine scores every legal move, then a typed decision model (such as Jev) makes the final pick. It plays standard duels and solo games. Games with three or more snakes are not supported.
 
-Requires Python 3.13 and `uv`.
+## Setup
+
+You'll need Python 3.13 and [uv](https://docs.astral.sh/uv/).
 
 ```sh
 uv sync
 cp .env.example .env
-uv run deciding-denise
 ```
 
-Set your key in `.env` in the directory where you run the server:
+Put your API key in `.env`. The server reads `.env` from whatever directory you start it in.
 
 ```dotenv
 TYPESAFE_API_KEY='your_key'
-# TYPESAFE_BASE_URL='https://your-compatible-api-root'
-# TYPESAFE_MODEL='your-model-name'
-
+# TYPESAFE_BASE_URL='https://openrouter.ai/api'
+# TYPESAFE_MODEL='typesafe/jev-1.13'
 # DEBUG=1
 ```
 
-Run tests with `uv run pytest`.
+## Run
+
+```sh
+uv run deciding-denise
+```
+
+The snake listens on `http://localhost:8000`. To try it against another snake, use the [Battlesnake CLI](https://github.com/BattlesnakeOfficial/rules):
+
+```sh
+battlesnake play -n Denise -u http://localhost:8000 -n Rival -u http://localhost:9000
+```
+
+## Test
+
+```sh
+uv run pytest
+```
